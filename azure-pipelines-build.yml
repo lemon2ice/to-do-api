@@ -15,9 +15,7 @@ variables:
   - group: ACR-Credentials   # Para obtener el acrServer
 
 steps:
-# 1. Construir y pushear la imagen directamente en el ACR (sin Docker local,
-#    misma conexión ARM que el resto de los pipelines; evita el problema de
-#    necesitar una service connection de tipo "Docker Registry" aparte)
+# 1. Construir y pushear la imagen directamente en el ACR (sin Docker local)
 - task: AzureCLI@2
   displayName: 'Build & push imagen (az acr build)'
   inputs:
@@ -41,13 +39,7 @@ steps:
     az devops configure --defaults organization=$(System.TeamFoundationCollectionUri) project=$(System.TeamProject)
 
     GROUP_ID=$(az pipelines variable-group list --query "[?name=='Release-Vars'].id" -o tsv)
-
-    if [ -z "$GROUP_ID" ]; then
-      echo "Creando grupo Release-Vars..."
-      az pipelines variable-group create --name "Release-Vars" --variables imageTag="$(Build.BuildId)"
-    else
-      az pipelines variable-group variable update --group-id $GROUP_ID --name imageTag --value "$(Build.BuildId)"
-    fi
+    az pipelines variable-group variable update --group-id $GROUP_ID --name imageTag --value "$(Build.BuildId)"
   displayName: 'Actualizar imageTag en Release-Vars'
   env:
     AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
