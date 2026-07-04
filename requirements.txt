@@ -1,0 +1,7 @@
+# Si necesitas instalar dependencias adicionales
+# La imagen ya trae FastAPI, pero puedes añadir más
+requests==2.31.0
+python-multipart==0.0.6
+mysql-connector-python==8.1.0
+python-dotenv==1.0.0
+jinja2==3.1.4
