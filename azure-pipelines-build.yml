@@ -2,6 +2,10 @@ trigger:
   branches:
     include:
       - main
+  paths:
+    exclude:
+      - '*.tf'
+      - '*.tfvars'
 
 pool:
   vmImage: 'ubuntu-latest'
@@ -11,38 +15,38 @@ variables:
   - group: ACR-Credentials   # Para obtener el acrServer
 
 steps:
-# 1. Iniciar sesión en ACR usando la conexión de servicio (más segura)
+# 1. Construir y pushear la imagen directamente en el ACR (sin Docker local,
+#    misma conexión ARM que el resto de los pipelines; evita el problema de
+#    necesitar una service connection de tipo "Docker Registry" aparte)
 - task: AzureCLI@2
-  displayName: 'Login a ACR'
+  displayName: 'Build & push imagen (az acr build)'
   inputs:
     azureSubscription: 'azure-connection'
     scriptType: 'bash'
     scriptLocation: 'inlineScript'
     inlineScript: |
-      az acr login --name $(acrServer)
+      set -e
+      ACR_NAME=$(echo "$(acrServer)" | cut -d'.' -f1)
+      az acr build \
+        --registry "$ACR_NAME" \
+        --image todo-api:$(Build.BuildId) \
+        --image todo-api:latest \
+        .
 
-# 2. Construir y pushear la imagen con Docker
-- task: Docker@2
-  inputs:
-    containerRegistry: 'azure-connection'  # Usamos la misma conexión ARM (tiene permisos para ACR)
-    repository: 'todo-api'
-    command: 'buildAndPush'
-    Dockerfile: '**/Dockerfile'
-    tags: |
-      $(Build.BuildId)
-      latest
-
-# 3. Actualizar el grupo de variables Release-Vars con el nuevo tag
+# 2. Actualizar el grupo de variables Release-Vars con el nuevo tag
 - script: |
+    set -e
+    az config set extension.use_dynamic_install=yes_without_prompt
     az extension add --name azure-devops --yes
-    PROJECT_ID=$(az devops project show --project "$(System.TeamProject)" --query id -o tsv)
-    GROUP_ID=$(az pipelines variable-group list --project "$(System.TeamProject)" --query "[?name=='Release-Vars'].id" -o tsv)
+    az devops configure --defaults organization=$(System.TeamFoundationCollectionUri) project=$(System.TeamProject)
+
+    GROUP_ID=$(az pipelines variable-group list --query "[?name=='Release-Vars'].id" -o tsv)
 
     if [ -z "$GROUP_ID" ]; then
       echo "Creando grupo Release-Vars..."
-      az pipelines variable-group create --name "Release-Vars" --project "$(System.TeamProject)" --variables imageTag="$(Build.BuildId)"
+      az pipelines variable-group create --name "Release-Vars" --variables imageTag="$(Build.BuildId)"
     else
-      az pipelines variable-group variable update --group-id $GROUP_ID --name imageTag --value "$(Build.BuildId)" --project "$(System.TeamProject)"
+      az pipelines variable-group variable update --group-id $GROUP_ID --name imageTag --value "$(Build.BuildId)"
     fi
   displayName: 'Actualizar imageTag en Release-Vars'
   env:
