@@ -2,80 +2,48 @@ trigger:
   branches:
     include:
       - main
-  paths:
-    include:
-      - '*.tf'
-      - '*.tfvars'
 
 pool:
   vmImage: 'ubuntu-latest'
 
 variables:
-  - group: Release-Vars       # Para obtener containerName, resourceGroupName, etc.
-  # No incluimos ACR-Credentials porque las vamos a actualizar
+  - group: Release-Vars
+  - group: ACR-Credentials   # Para obtener el acrServer
 
 steps:
-# 1. Instalar Terraform
-- task: TerraformInstaller@1
+# 1. Iniciar sesión en ACR usando la conexión de servicio (más segura)
+- task: AzureCLI@2
+  displayName: 'Login a ACR'
   inputs:
-    terraformVersion: '1.5.7'
+    azureSubscription: 'azure-connection'
+    scriptType: 'bash'
+    scriptLocation: 'inlineScript'
+    inlineScript: |
+      az acr login --name $(acrServer)
 
-# 2. Inicializar Terraform
-- task: TerraformTaskV4@4
+# 2. Construir y pushear la imagen con Docker
+- task: Docker@2
   inputs:
-    provider: 'azurerm'
-    command: 'init'
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
-    backendServiceArm: 'azure-connection'   # Nombre de tu service connection
-    backendAzureRmResourceGroupName: 'rg-aci-proyecto'
-    backendAzureRmStorageAccountName: 'tfstate12345'  # Crea uno si no existe
-    backendAzureRmContainerName: 'tfstate'
-    backendAzureRmKey: 'terraform.tfstate'
+    containerRegistry: 'azure-connection'  # Usamos la misma conexión ARM (tiene permisos para ACR)
+    repository: 'todo-api'
+    command: 'buildAndPush'
+    Dockerfile: '**/Dockerfile'
+    tags: |
+      $(Build.BuildId)
+      latest
 
-# 3. Plan (opcional)
-- task: TerraformTaskV4@4
-  inputs:
-    provider: 'azurerm'
-    command: 'plan'
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
-    environmentServiceNameAzureRM: 'azure-connection'
-    commandOptions: '-var="resource_group_name=$(resourceGroupName)" -var="container_name=$(containerName)" -var="container_port=$(containerPort)"'
-
-# 4. Aplicar
-- task: TerraformTaskV4@4
-  inputs:
-    provider: 'azurerm'
-    command: 'apply'
-    workingDirectory: '$(System.DefaultWorkingDirectory)'
-    environmentServiceNameAzureRM: 'azure-connection'
-    commandOptions: '-auto-approve -var="resource_group_name=$(resourceGroupName)" -var="container_name=$(containerName)" -var="container_port=$(containerPort)"'
-
-# 5. Obtener outputs de Terraform y actualizar el grupo de variables 'ACR-Credentials'
+# 3. Actualizar el grupo de variables Release-Vars con el nuevo tag
 - script: |
-    # Extraer outputs en variables de entorno
-    cd $(System.DefaultWorkingDirectory)
-    terraform output -json > outputs.json
-    ACR_SERVER=$(cat outputs.json | jq -r '.acr_login_server.value')
-    ACR_USERNAME=$(cat outputs.json | jq -r '.acr_username.value')
-    ACR_PASSWORD=$(cat outputs.json | jq -r '.acr_password.value')
-
-    # Instalar la extensión de Azure DevOps (si no está instalada)
     az extension add --name azure-devops --yes
-
-    # Obtener el ID del grupo de variables "ACR-Credentials"
-    # Nota: Necesitas el ID del proyecto y el nombre del grupo
-    # Usamos la CLI de Azure DevOps para actualizar las variables
     PROJECT_ID=$(az devops project show --project "$(System.TeamProject)" --query id -o tsv)
-    GROUP_ID=$(az pipelines variable-group list --project "$(System.TeamProject)" --query "[?name=='ACR-Credentials'].id" -o tsv)
+    GROUP_ID=$(az pipelines variable-group list --project "$(System.TeamProject)" --query "[?name=='Release-Vars'].id" -o tsv)
 
     if [ -z "$GROUP_ID" ]; then
-      echo "No se encontró el grupo de variables ACR-Credentials. Creándolo..."
-      az pipelines variable-group create --name "ACR-Credentials" --project "$(System.TeamProject)" --variables acrServer="$ACR_SERVER" acrUsername="$ACR_USERNAME" acrPassword="$ACR_PASSWORD" --secret acrUsername acrPassword
+      echo "Creando grupo Release-Vars..."
+      az pipelines variable-group create --name "Release-Vars" --project "$(System.TeamProject)" --variables imageTag="$(Build.BuildId)"
     else
-      az pipelines variable-group variable update --group-id $GROUP_ID --name acrServer --value "$ACR_SERVER" --project "$(System.TeamProject)"
-      az pipelines variable-group variable update --group-id $GROUP_ID --name acrUsername --value "$ACR_USERNAME" --project "$(System.TeamProject)" --secret true
-      az pipelines variable-group variable update --group-id $GROUP_ID --name acrPassword --value "$ACR_PASSWORD" --project "$(System.TeamProject)" --secret true
+      az pipelines variable-group variable update --group-id $GROUP_ID --name imageTag --value "$(Build.BuildId)" --project "$(System.TeamProject)"
     fi
-  displayName: 'Actualizar grupo de variables ACR-Credentials'
+  displayName: 'Actualizar imageTag en Release-Vars'
   env:
-    AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)  # Necesita permisos para modificar variable groups
+    AZURE_DEVOPS_EXT_PAT: $(System.AccessToken)
