@@ -21,7 +21,7 @@ steps:
 - task: AzureCLI@2
   displayName: 'Build & push imagen (az acr build)'
   inputs:
-    azureSubscription: 'azure-connection'
+    azureSubscription: 'azure semestral'
     scriptType: 'bash'
     scriptLocation: 'inlineScript'
     inlineScript: |
