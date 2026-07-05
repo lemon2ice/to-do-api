@@ -7,6 +7,15 @@ trigger:
       - '*.tf'
       - '*.tfvars'
 
+resources:
+  pipelines:
+    - pipeline: infraTrigger
+      source: infraestructura-semestral
+      trigger:
+        branches:
+          include:
+            - main
+
 pool:
   vmImage: 'ubuntu-latest'
 
