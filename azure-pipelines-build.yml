@@ -7,6 +7,7 @@ trigger:
       - '*.tf'
       - '*.tfvars'
 
+# se ejecuta cuando se hace un cambio en la pipeline de infraestructura (infraestructura-semestral)
 resources:
   pipelines:
     - pipeline: infraTrigger
